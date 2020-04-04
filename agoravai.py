@@ -26,21 +26,18 @@ class BBTreeNode():
         self.bool_vars = bool_vars
         self.children = []
     def buildProblem(self):
-        prob = cvx.Problem(cvx.Minimize(self.objective), self.constraints) #i put Minimize, just so you know that I'm assuming it
+        prob = cvx.Problem(cvx.Minimize(self.objective), self.constraints) #criando problema, colocando minimização.
         return prob
-    def is_integral(self):
-        print (all([abs(v.value - 1) <= 1e-3 or abs(v.value - 0) <= 1e-3 for v in self.bool_vars]))
-        return all([abs(v.value - 1) <= 1e-3 or abs(v.value - 0) <= 1e-3 for v in self.bool_vars])
 
 
 
-    def is_fractional(self):
+    def is_fractional(self):# verificando se é fracionario, e descobrindo os fracionarios.
       self.fracionario = []
       for num in self.bool_vars:
         if not str(round(num.value, 2)).replace('.','').isdigit(): return 
         if(float(round(num.value, 2)) != int(round(num.value, 2))):
           self.fracionario.append(num)
-      #print(fracionario)
+      
       if (len(self.fracionario) == 0):
         return False
       return self.fracionario
@@ -50,23 +47,33 @@ class BBTreeNode():
     def branch(self):
         children = []
         for b in [0,1]:
-                n1 = copy.deepcopy(self) #yeesh. Not good performance wise, but is simple implementation-wise
-                v = n1.heuristic() #dangerous what if they don't do the same one? I need to do it here though because I need access to copied v.
-                n1.constraints.append( v == b ) # add in the new binary constraint
+                n1 = copy.deepcopy(self) #Faz uma copia do nó da instancia
+                v = n1.heuristic() #Descobri o numero mais perto do 0.5, usando heuristica.
+                n1.constraints.append( v == b ) # adicionando novas restrições binarias
                 n1.children = []
-                n1.bool_vars.remove(v) #remove binary constraint from bool var set
-                n1.vars.add(v) #and add it into var set for later inspection of answer
-                #self.children.append(n1)   # eventually I might want to keep around the entire search tree. I messed this up though
-                children.append(n1)             
+                n1.bool_vars.remove(v) #Remove a restrição binaria do bool_vars
+                n1.vars.add(v) #adionando as novas restrições a vars
+                children.append(n1) # colona o novo nó na lista do filho
+        print("seguindo pela variavel com valor: ", round(v.value, 4))  # seguimento das novas restrições           
         return children
 
 
-    def heuristic(self):
+    def Is_infinit(self): # verificar se é inviavel, se o valor de z for none
+        tester = 0
+        z = (list([(v.value) for v in self.bool_vars] + [(v.value) for v in self.vars] ) )
+        for i in range(len(z)):
+          if(z[i] == None ):
+            tester +=1
+            continue
+        if tester == len(z):
+          return True
+        else:
+          return False
+
+
+    def heuristic(self): #verifica o mais proximo do 0.5, e retornar esta variavel.
         mais_proximo = 1e30
-        #fracionarios = self.is_fractional()
-        print(self.fracionario)
         for v in self.fracionario:
-          print(round((v.value * 100 ),4))
           if (round(v.value, 4) > 0.5):
             x = range(round((int(v.value) * 100 ), 4) ,50 , -5)
           elif (round(v.value, 4) < 0.5):
@@ -83,34 +90,50 @@ class BBTreeNode():
       
 
 
-    def bbsolve(self):
+    def bbsolve(self): #resolvendo as relaxações, e criando a arvore para resolução.
+        print("~~"*32)
+        print("Adicionando Nó Pai")
         root = self
         res = root.buildProblem().solve()
         heap = [(res, next(counter), root)]
-        bestres = 1e20 # a big arbitrary initial best objective value
-        bestnode = root # initialize bestnode to the root
+        bestres = 1e20 # cria um arbitrario muito grande para o dual
+        bestnode = root # inicia o pai como o melhor nó
         print(heap)
         nodecount = 0
-        while len(heap) > 0: 
-            nodecount += 1 # for statistics
-            print("Heap Size: ", len(heap))
+        print(sorted(list([(v.name(), v.value) for v in root.bool_vars] + [(v.name(), v.value) for v in root.vars] )) )
+        while len(heap) > 0:
+            print("~~"*32)
+            nodecount += 1 
+            print("Nós abertos: ", len(heap))
+            print("abrindo nó...")
+            print("~~"*32)
+            print("numero do nó",nodecount)
             _, _, node = heappop(heap)
             prob = node.buildProblem()
             res = prob.solve()
-            print("Result: ", res)
+            z = (sorted(list([(v.name(), v.value) for v in node.bool_vars] + [(v.name(), v.value) for v in node.vars] )) )
+            for i in range(len(z)):
+              if(z[i][1] == None ):
+                continue
+              print("X{} = {:.4f}".format(i,round(z[i][1],4)))
+            tester = node.Is_infinit()
+            if (tester):
+              print("Infinito, podado por inviabilidade")
+              continue
+            print("Z = ", round(res,4))
             if prob.status not in ["infeasible", "unbounded"]:
-                if res > bestres - 1e-3: #even the relaxed problem sucks. forget about this branch then
-                    print("Relaxed Problem Stinks. Killing this branch.")
+                if res > bestres - 1e-3: #verificando se o Z do nó é maior que meu Dual
+                    print("Podado por limitante. Podando o nó.")
                     pass
-                elif not node.is_fractional(): #if a valid solution then this is the new best
-                        print("New Best Integral solution.")
+                elif not node.is_fractional(): #se não for fracionario, logo são todos integral.
+                        print("Nova solução integral.")
                         bestres = res
                         bestnode = node
-                else: #otherwise, we're unsure if this branch holds promise. Maybe it can't actually achieve this lower bound. So branch into it
+                else: # cria dois novos nó com as novas restrições
                     new_nodes = node.branch()
                     for new_node in new_nodes:
-                        heappush(heap, (res, next(counter), new_node ) )  # using counter to avoid possible comparisons between nodes. It tie breaks
-        print("Nodes searched: ", nodecount)      
+                        heappush(heap, (res, next(counter), new_node ) )  # não comparar os nó que ja foram usados usando o counter
+        print("Quantidade de nós descobertos: ", nodecount)      
         return bestres, bestnode
 
 """# Manipulando"""
@@ -151,4 +174,10 @@ bool_vars = {x[i] for i in range(variaveis)}
 
 root = BBTreeNode(constraints = constraints, objective= objective, bool_vars = bool_vars)
 res, sol = root.bbsolve()
-print(sorted(list([(v.name(), v.value) for v in sol.bool_vars] + [(v.name(), v.value) for v in sol.vars] ) ))
+print("~~"*32)
+print("==========Solução encontrada==========")
+print("Z = {:.4f}: ".format(res))
+print("variaveis: ")
+z = (sorted(list([(v.name(), v.value) for v in sol.bool_vars] + [(v.name(), v.value) for v in sol.vars] )) )
+for i in range(len(z)):
+  print("X{} = {:.2f}".format(i,round(z[i][1],4)))
